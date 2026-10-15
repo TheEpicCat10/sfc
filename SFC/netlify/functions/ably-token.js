@@ -2,7 +2,7 @@ const Ably = require('ably');
 
 exports.handler = async function (event, context) {
   // Initialize the Ably REST client using the environment variable
-  const rest = new Ably.Rest({ key: process.env.Ably_Key });
+  const rest = new Ably.Rest({ key: process.env.Alby_Key });
 
   try {
     // Request a token request on behalf of the client
