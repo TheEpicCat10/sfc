@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>HTML5 App with Ably & Netlify</title>
+    <!-- Load Ably JavaScript SDK -->
+    <script src="https://cdn.ably.com/lib/ably.min-1.js"></script>
+</head>
+<body>
+    <h1>Realtime HTML5 App</h1>
+    <div id="messages"></div>
+    <input type="text" id="chatInput" placeholder="Type a message..." />
+    <button onclick="sendMessage()">Send</button>
+
+    <script>
+        // Initialize Ably using the Netlify Function auth endpoint
+        const realtime = new Ably.Realtime({
+            authUrl: '/.netlify/functions/ably-token'
+        });
+
+        // Connect to a specific channel
+        const channel = realtime.channels.get('public-chat');
+
+        // Listen for incoming messages
+        channel.subscribe('update', (message) => {
+            const box = document.getElementById('messages');
+            box.innerHTML += `<p>${message.data}</p>`;
+        });
+
+        // Publish a message
+        function sendMessage() {
+            const input = document.getElementById('chatInput');
+            if(input.value.trim() === '') return;
+            
+            channel.publish('update', input.value, (err) => {
+                if (err) {
+                    console.log('Unable to publish message; err = ' + err.message);
+                } else {
+                    input.value = '';
+                }
+            });
+        }
+    </script>
+</body>
+</html>
