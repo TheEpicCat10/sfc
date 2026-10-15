@@ -9,6 +9,6 @@
   "keywords": [],
   "type": "commonjs",
   "dependencies": {
-    "alby": "^1.0.1"
+    "ably": "^2.29.0"
   }
 }
