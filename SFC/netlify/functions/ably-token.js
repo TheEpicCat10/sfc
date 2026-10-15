@@ -1,25 +1,32 @@
 const Ably = require('ably');
 
-exports.handler = async function (event, context) {
-  // Initialize the Ably REST client using the environment variable
-  const rest = new Ably.Rest({ key: process.env.Alby_Key });
+exports.handler = async function () {
+  const apiKey = process.env.Alby_Key;
+
+  if (!apiKey) {
+    console.error('Environment variable Alby_Key is not set');
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: 'Ably key is not configured' }),
+    };
+  }
 
   try {
-    // Request a token request on behalf of the client
-    // You can also assign a unique clientId here if handling users
-    const tokenRequestData = await new Promise((resolve, reject) => {
-      rest.auth.createTokenRequest({ clientId: 'html5-app-user' }, (err, tokenRequest) => {
-        if (err) reject(err);
-        else resolve(tokenRequest);
-      });
+    const rest = new Ably.Rest({ key: apiKey });
+
+    // Ably v2 is promise-based: callbacks are no longer supported
+    const tokenRequest = await rest.auth.createTokenRequest({
+      clientId: 'html5-app-user',
     });
 
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(tokenRequestData),
+      body: JSON.stringify(tokenRequest),
     };
   } catch (error) {
+    // Shows up in Netlify > Logs > Functions
+    console.error('Ably token error:', error);
     return {
       statusCode: 500,
       body: JSON.stringify({ error: 'Failed to generate Ably token request' }),
