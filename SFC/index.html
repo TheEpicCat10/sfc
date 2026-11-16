@@ -2,17 +2,169 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>HTML5 App with Ably & Netlify</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>HTML5 App with Ably &amp; Netlify</title>
     <!-- Load Ably JavaScript SDK -->
     <script src="https://cdn.ably.com/lib/ably.min-1.js"></script>
+    <!-- Pixel fonts (falls back to monospace if they can't load) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --felt: #1b5a48; --felt-2: #185040;
+            --panel: #0d2f26; --slot: #091f19; --ink: #1a1030;
+            --text: #e8efe0; --muted: #8fb3a1;
+            --gold: #f4b942; --gold-dark: #b97b1c;
+            --good: #5fd068; --bad: #e8554a; --warn: #f4b942;
+            --body: "VT323", ui-monospace, "Courier New", monospace;
+            --display: "Press Start 2P", ui-monospace, "Courier New", monospace;
+        }
+        * { box-sizing: border-box; }
+
+        /* Felt table with a square checker pattern */
+        html { background: conic-gradient(var(--felt-2) 25%, var(--felt) 0 50%, var(--felt-2) 0 75%, var(--felt) 0) 0 0 / 16px 16px; }
+        body { max-width: 960px; margin: 0 auto; padding: 32px 20px 56px; font: 22px/1.2 var(--body); color: var(--text); }
+
+        h1 { margin: 0 0 32px 8px; font: clamp(16px, 4vw, 26px)/1.4 var(--display); text-shadow: 4px 4px 0 var(--ink); }
+        h2 { margin: 0 0 16px; font: 14px/1.4 var(--display); color: var(--gold); }
+        h3 { margin: 24px 0 0; font: 12px/1.4 var(--display); }
+
+        /* Pixel border: four offset strips leave the corners notched */
+        .panel, .btn, input[type="text"], .card, #log, #bar, #slot {
+            box-shadow: 0 -4px 0 0 var(--edge, var(--ink)), 0 4px 0 0 var(--edge, var(--ink)),
+                        -4px 0 0 0 var(--edge, var(--ink)), 4px 0 0 0 var(--edge, var(--ink));
+        }
+        .panel { background: var(--panel); padding: 20px; margin: 0 8px 40px; }
+
+        /* Buttons */
+        .btn { font: 12px/1 var(--display); color: var(--ink); background: var(--gold); border: 0; padding: 14px 18px; margin: 4px; cursor: pointer;
+               box-shadow: 0 -4px 0 0 var(--ink), 0 4px 0 0 var(--ink), -4px 0 0 0 var(--ink), 4px 0 0 0 var(--ink), inset 0 -4px 0 0 var(--gold-dark); }
+        .btn:hover { background: #ffc95c; }
+        .btn:active { transform: translateY(4px);
+               box-shadow: 0 -4px 0 0 var(--ink), 0 4px 0 0 var(--ink), -4px 0 0 0 var(--ink), 4px 0 0 0 var(--ink), inset 0 4px 0 0 var(--gold-dark); }
+        .btn.alt { background: var(--muted); box-shadow: 0 -4px 0 0 var(--ink), 0 4px 0 0 var(--ink), -4px 0 0 0 var(--ink), 4px 0 0 0 var(--ink), inset 0 -4px 0 0 #5c7a6c; }
+        .btn.alt:hover { background: #a6c6b6; }
+        .btn:focus-visible, input:focus-visible, #log:focus-visible { outline: 4px solid var(--gold); outline-offset: 8px; }
+
+        /* Chat */
+        #messages { min-height: 72px; margin: 4px 4px 20px; padding: 10px 14px; background: var(--slot); box-shadow: 0 -4px 0 0 var(--ink), 0 4px 0 0 var(--ink), -4px 0 0 0 var(--ink), 4px 0 0 0 var(--ink); }
+        #messages:empty::before { content: "No messages yet. Type one below."; color: var(--muted); }
+        #messages p { margin: 4px 0; padding-left: 12px; border-left: 4px solid var(--gold); overflow-wrap: anywhere; }
+        .row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; }
+        input[type="text"] { flex: 1 1 220px; min-width: 0; margin: 4px; padding: 10px 12px; font: 22px var(--body); color: var(--text); background: var(--slot); border: 0; caret-color: var(--gold);
+               box-shadow: 0 -4px 0 0 var(--ink), 0 4px 0 0 var(--ink), -4px 0 0 0 var(--ink), 4px 0 0 0 var(--ink), inset 4px 4px 0 0 rgba(0,0,0,.35); }
+        input::placeholder { color: var(--muted); }
+
+        /* Status LEDs */
+        .status { display: flex; flex-wrap: wrap; gap: 12px 32px; margin-bottom: 16px; }
+        .stat { display: inline-flex; align-items: center; gap: 12px; }
+        .led { width: 14px; height: 14px; background: var(--warn); box-shadow: 0 0 0 3px var(--ink); }
+        .stat[data-tone="good"] .led { background: var(--good); }
+        .stat[data-tone="bad"] .led { background: var(--bad); }
+        .stat strong { font-weight: normal; color: var(--gold); }
+
+        /* Toolbar and progress bar */
+        .toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px 24px; margin: 8px 4px 0; }
+        .toolbar .checks { display: flex; flex-wrap: wrap; gap: 8px 24px; }
+        .check { display: inline-flex; align-items: center; gap: 12px; cursor: pointer; }
+        .check input { appearance: none; -webkit-appearance: none; width: 16px; height: 16px; margin: 4px; background: var(--slot); cursor: pointer;
+               box-shadow: 0 -4px 0 0 var(--text), 0 4px 0 0 var(--text), -4px 0 0 0 var(--text), 4px 0 0 0 var(--text); }
+        .check input:checked { background: var(--gold);
+               box-shadow: 0 -4px 0 0 var(--text), 0 4px 0 0 var(--text), -4px 0 0 0 var(--text), 4px 0 0 0 var(--text), inset 0 0 0 3px var(--slot); }
+        #bar { position: relative; display: flex; height: 20px; margin: 20px 4px 24px; background: var(--slot); overflow: hidden; }
+        #bar::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(90deg, transparent 0 8px, var(--slot) 8px 12px); }
+        #barOk { background: var(--good); }
+        #barBad { background: var(--bad); }
+
+        /* Card grid */
+        #cardGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 20px 16px; padding: 4px; }
+        .card { --edge: #5d7f70; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px; border: 0; background: var(--slot); color: var(--text); font: 17px/1 var(--body); cursor: pointer; overflow-wrap: anywhere; }
+        .card:hover { transform: translateY(-4px); }
+        .card:active { transform: translateY(2px); }
+        .card[hidden] { display: none; }
+        .card.ok { --edge: var(--good); }
+        .card.failed { --edge: var(--bad); }
+        .card.sent { --edge: var(--gold); background: #2a2310; }
+        .card img { width: 100%; aspect-ratio: 5 / 7; object-fit: contain; }
+        .card .miss { display: none; width: 100%; aspect-ratio: 5 / 7; align-items: center; justify-content: center; text-align: center; color: var(--bad); font: 10px/1.6 var(--display); }
+        .card.failed img { display: none; }
+        .card.failed .miss { display: flex; }
+        .crisp .card img, .crisp #lastImg { image-rendering: pixelated; }
+
+        /* Round trip slot */
+        #lastReceived { display: flex; align-items: center; gap: 28px; margin: 28px 4px 8px; }
+        #slot { flex: none; width: 100px; aspect-ratio: 5 / 7; display: grid; place-items: center; background: var(--slot); }
+        #slot:has(#lastImg[hidden])::before { content: "?"; font: 20px var(--display); color: var(--muted); }
+        #lastImg { width: 100%; height: 100%; object-fit: contain; }
+        #lastName { color: var(--gold); }
+
+        /* Log */
+        #log { height: 220px; overflow: auto; margin: 16px 4px 12px; padding: 10px 12px; background: var(--slot); font: 19px/1.25 var(--body); }
+        #log:empty::before { content: "Nothing logged yet."; color: var(--muted); }
+        .line { white-space: pre-wrap; overflow-wrap: anywhere; }
+        .line.connection, .line.channel { color: var(--muted); }
+        .line.sent { color: var(--gold); }
+        .line.received { color: var(--good); }
+        .line.error, .line.image { color: var(--bad); }
+    </style>
 </head>
-<body>
+<body class="crisp">
     <h1>Realtime HTML5 App</h1>
-    <div id="messages"></div>
-    <input type="text" id="chatInput" placeholder="Type a message..." />
-    <button onclick="sendMessage()">Send</button>
+
+    <section class="panel">
+        <h2>Chat</h2>
+        <div id="messages"></div>
+        <div class="row">
+            <input type="text" id="chatInput" placeholder="Type a message…" />
+            <button class="btn" onclick="sendMessage()">Send</button>
+        </div>
+    </section>
+
+    <!-- Debug screen -->
+    <section class="panel" id="debug">
+        <h2>Card debug</h2>
+
+        <div class="status">
+            <span class="stat" data-tone="warn"><span class="led"></span>Connection <strong id="connState">initialized</strong></span>
+            <span class="stat" data-tone="warn"><span class="led"></span>Channel <strong id="chanState">initialized</strong></span>
+        </div>
+
+        <div class="toolbar">
+            <span id="cardSummary">Loading cards…</span>
+            <div class="checks">
+                <label class="check"><input type="checkbox" id="crispToggle" checked> Crisp pixels</label>
+                <label class="check"><input type="checkbox" id="failedOnly"> Show failed only</label>
+            </div>
+        </div>
+        <div id="bar" aria-hidden="true"><span id="barOk"></span><span id="barBad"></span></div>
+
+        <div id="cardGrid"></div>
+
+        <div id="lastReceived">
+            <div id="slot"><img id="lastImg" alt="" hidden></div>
+            <div>Last card received from Ably<br><strong id="lastName">none yet</strong></div>
+        </div>
+
+        <h3>Log</h3>
+        <div id="log" role="log" tabindex="0"></div>
+        <button class="btn alt" id="clearLog" type="button">Clear log</button>
+    </section>
 
     <script>
+        // ---------- Settings ----------
+        const CARD_FOLDER = '/cards/';   // URL path of the folder (forward slashes, relative to the site root)
+        const CARD_EVENT  = 'card';      // Ably event name used when a card is clicked
+
+        // The browser cannot list a folder, so the filenames go in this array.
+        // Replace it with your real filenames if they differ from this pattern.
+        const RANKS = ['ace', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'jack', 'queen', 'king'];
+        const SUITS = ['clubs', 'diamonds', 'hearts', 'spades'];
+        const CARD_FILES = SUITS.flatMap(suit => RANKS.map(rank => `${rank}_of_${suit}.png`));
+        // Example of a hand-written list:
+        // const CARD_FILES = ['back.png', 'ace_of_spades.png', 'king_of_hearts.png'];
+
+        // ---------- Ably ----------
         // Initialize Ably using the Netlify Function auth endpoint
         const realtime = new Ably.Realtime({
             authUrl: '/.netlify/functions/ably-token'
@@ -21,25 +173,148 @@
         // Connect to a specific channel
         const channel = realtime.channels.get('public-chat');
 
+        // ---------- Debug log ----------
+        const logEl = document.getElementById('log');
+        function log(kind, text) {
+            const line = document.createElement('div');
+            line.className = 'line ' + kind;
+            line.textContent = `${new Date().toLocaleTimeString()} ${kind}: ${text}`;
+            logEl.appendChild(line);
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+        document.getElementById('clearLog').addEventListener('click', () => { logEl.textContent = ''; });
+
+        // Colors the status light: green = good, red = problem, yellow = in progress
+        const TONES = { connected: 'good', attached: 'good', failed: 'bad', suspended: 'bad', closing: 'bad', closed: 'bad', disconnected: 'bad' };
+        function showState(id, state) {
+            const el = document.getElementById(id);
+            el.textContent = state;
+            el.parentElement.dataset.tone = TONES[state] || 'warn';
+        }
+        showState('connState', realtime.connection.state);
+        showState('chanState', channel.state);
+
+        realtime.connection.on(change => {
+            showState('connState', change.current);
+            const reason = change.reason ? ` (${change.reason.message})` : '';
+            log('connection', `${change.previous} to ${change.current}${reason}`);
+        });
+        channel.on(change => {
+            showState('chanState', change.current);
+            const reason = change.reason ? ` (${change.reason.message})` : '';
+            log('channel', `${change.previous} to ${change.current}${reason}`);
+        });
+
+        // ---------- Chat (original behavior) ----------
         // Listen for incoming messages
         channel.subscribe('update', (message) => {
             const box = document.getElementById('messages');
-            box.innerHTML += `<p>${message.data}</p>`;
+            const p = document.createElement('p');
+            p.textContent = message.data;   // textContent so incoming text is never run as HTML
+            box.appendChild(p);
         });
 
         // Publish a message
         function sendMessage() {
             const input = document.getElementById('chatInput');
-            if(input.value.trim() === '') return;
-            
+            if (input.value.trim() === '') return;
+
             channel.publish('update', input.value, (err) => {
                 if (err) {
                     console.log('Unable to publish message; err = ' + err.message);
+                    log('error', 'could not send chat message: ' + err.message);
                 } else {
                     input.value = '';
                 }
             });
         }
+        document.getElementById('chatInput').addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
+
+        // ---------- Card debug ----------
+        const cards = CARD_FILES.map(file => ({
+            file,
+            name: file.replace(/\.[^.]+$/, ''),   // name without the extension, e.g. "ace_of_spades"
+            url: CARD_FOLDER + file,
+            status: 'loading',
+            el: null
+        }));
+
+        const grid = document.getElementById('cardGrid');
+        const failedOnly = document.getElementById('failedOnly');
+
+        document.getElementById('crispToggle').addEventListener('change', e => {
+            document.body.classList.toggle('crisp', e.target.checked);
+        });
+
+        function updateSummary() {
+            const count = s => cards.filter(c => c.status === s).length;
+            const ok = count('ok'), bad = count('failed');
+            document.getElementById('cardSummary').textContent =
+                `${ok} loaded, ${bad} failed, ${count('loading')} loading (${cards.length} total)`;
+            document.getElementById('barOk').style.width = (ok / cards.length * 100) + '%';
+            document.getElementById('barBad').style.width = (bad / cards.length * 100) + '%';
+            cards.forEach(c => { c.el.hidden = failedOnly.checked && c.status !== 'failed'; });
+        }
+        failedOnly.addEventListener('change', updateSummary);
+
+        function setCardStatus(card, status) {
+            card.status = status;
+            card.el.classList.remove('loading', 'ok', 'failed');
+            card.el.classList.add(status);
+            if (status === 'failed') log('image', `could not load ${card.url}`);
+            updateSummary();
+        }
+
+        function sendCard(card) {
+            card.el.classList.add('sent');
+            setTimeout(() => card.el.classList.remove('sent'), 400);
+            channel.publish(CARD_EVENT, card.name, (err) => {
+                if (err) log('error', `could not send “${card.name}”: ${err.message}`);
+                else log('sent', card.name);
+            });
+        }
+
+        cards.forEach(card => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'card loading';
+            btn.title = card.url;
+
+            const img = new Image();
+            img.alt = card.name;
+            img.onload  = () => setCardStatus(card, 'ok');
+            img.onerror = () => setCardStatus(card, 'failed');
+            img.src = card.url;
+
+            const miss = document.createElement('span');
+            miss.className = 'miss';
+            miss.textContent = 'not found';
+
+            const label = document.createElement('span');
+            label.textContent = card.name;
+
+            btn.append(img, miss, label);
+            btn.addEventListener('click', () => sendCard(card));
+
+            card.el = btn;
+            grid.appendChild(btn);
+        });
+        updateSummary();
+
+        // Round trip check: show whatever card name comes back from Ably
+        channel.subscribe(CARD_EVENT, (message) => {
+            log('received', String(message.data));
+            document.getElementById('lastName').textContent = message.data;
+            const match = cards.find(c => c.name === message.data);
+            const lastImg = document.getElementById('lastImg');
+            if (match && match.status === 'ok') {
+                lastImg.src = match.url;
+                lastImg.alt = match.name;
+                lastImg.hidden = false;
+            } else {
+                lastImg.hidden = true;
+            }
+        });
     </script>
 </body>
 </html>
