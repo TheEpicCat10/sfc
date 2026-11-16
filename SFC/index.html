@@ -90,7 +90,6 @@
         .card .miss { display: none; width: 100%; aspect-ratio: 5 / 7; align-items: center; justify-content: center; text-align: center; color: var(--bad); font: 10px/1.6 var(--display); }
         .card.failed img { display: none; }
         .card.failed .miss { display: flex; }
-        .crisp .card img, .crisp #lastImg { image-rendering: pixelated; }
 
         /* Round trip slot */
         #lastReceived { display: flex; align-items: center; gap: 28px; margin: 28px 4px 8px; }
@@ -103,13 +102,13 @@
         #log { height: 220px; overflow: auto; margin: 16px 4px 12px; padding: 10px 12px; background: var(--slot); font: 19px/1.25 var(--body); }
         #log:empty::before { content: "Nothing logged yet."; color: var(--muted); }
         .line { white-space: pre-wrap; overflow-wrap: anywhere; }
-        .line.connection, .line.channel { color: var(--muted); }
+        .line.connection, .line.channel, .line.scan { color: var(--muted); }
         .line.sent { color: var(--gold); }
         .line.received { color: var(--good); }
         .line.error, .line.image { color: var(--bad); }
     </style>
 </head>
-<body class="crisp">
+<body>
     <h1>Realtime HTML5 App</h1>
 
     <section class="panel">
@@ -133,7 +132,6 @@
         <div class="toolbar">
             <span id="cardSummary">Loading cards…</span>
             <div class="checks">
-                <label class="check"><input type="checkbox" id="crispToggle" checked> Crisp pixels</label>
                 <label class="check"><input type="checkbox" id="failedOnly"> Show failed only</label>
             </div>
         </div>
@@ -156,13 +154,14 @@
         const CARD_FOLDER = '/cards/';   // URL path of the folder (forward slashes, relative to the site root)
         const CARD_EVENT  = 'card';      // Ably event name used when a card is clicked
 
-        // The browser cannot list a folder, so the filenames go in this array.
-        // Replace it with your real filenames if they differ from this pattern.
-        const RANKS = ['ace', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'jack', 'queen', 'king'];
-        const SUITS = ['clubs', 'diamonds', 'hearts', 'spades'];
-        const CARD_FILES = SUITS.flatMap(suit => RANKS.map(rank => `${rank}_of_${suit}.png`));
-        // Example of a hand-written list:
-        // const CARD_FILES = ['back.png', 'ace_of_spades.png', 'king_of_hearts.png'];
+        // A browser cannot list a folder, so the page finds the cards by checking
+        // for 000000.svg, 000001.svg, ... until a run of numbers in a row is missing.
+        const CARD_EXT         = '.svg';
+        const CARD_DIGITS      = 6;      // 000000 has 6 digits
+        const CARD_NUMBER_BASE = 16;     // 16 = hex (00000a after 000009); use 10 if the names count in decimal
+        const MAX_GAP          = 8;      // stop after this many missing numbers in a row
+        const MAX_CARDS        = 5000;   // safety limit
+        const BATCH_SIZE       = 16;     // files checked at the same time
 
         // ---------- Ably ----------
         // Initialize Ably using the Netlify Function auth endpoint
@@ -231,28 +230,20 @@
         document.getElementById('chatInput').addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
 
         // ---------- Card debug ----------
-        const cards = CARD_FILES.map(file => ({
-            file,
-            name: file.replace(/\.[^.]+$/, ''),   // name without the extension, e.g. "ace_of_spades"
-            url: CARD_FOLDER + file,
-            status: 'loading',
-            el: null
-        }));
+        const cards = [];        // filled in by discoverCards()
+        let scanning = true;
 
         const grid = document.getElementById('cardGrid');
         const failedOnly = document.getElementById('failedOnly');
 
-        document.getElementById('crispToggle').addEventListener('change', e => {
-            document.body.classList.toggle('crisp', e.target.checked);
-        });
-
         function updateSummary() {
             const count = s => cards.filter(c => c.status === s).length;
-            const ok = count('ok'), bad = count('failed');
-            document.getElementById('cardSummary').textContent =
-                `${ok} loaded, ${bad} failed, ${count('loading')} loading (${cards.length} total)`;
-            document.getElementById('barOk').style.width = (ok / cards.length * 100) + '%';
-            document.getElementById('barBad').style.width = (bad / cards.length * 100) + '%';
+            const ok = count('ok'), bad = count('failed'), total = cards.length || 1;
+            document.getElementById('cardSummary').textContent = scanning
+                ? `Scanning ${CARD_FOLDER}… ${cards.length} found so far`
+                : `${cards.length} cards found: ${ok} loaded, ${bad} failed, ${count('loading')} loading`;
+            document.getElementById('barOk').style.width = (ok / total * 100) + '%';
+            document.getElementById('barBad').style.width = (bad / total * 100) + '%';
             cards.forEach(c => { c.el.hidden = failedOnly.checked && c.status !== 'failed'; });
         }
         failedOnly.addEventListener('change', updateSummary);
@@ -274,32 +265,97 @@
             });
         }
 
-        cards.forEach(card => {
+        // Builds one tile. exists = false adds a red "not found" tile for a gap in the numbering.
+        function addCard(name, exists) {
+            const card = { name, url: CARD_FOLDER + name + CARD_EXT, status: 'loading', el: null };
+
             const btn = document.createElement('button');
             btn.type = 'button';
             btn.className = 'card loading';
             btn.title = card.url;
 
             const img = new Image();
-            img.alt = card.name;
-            img.onload  = () => setCardStatus(card, 'ok');
-            img.onerror = () => setCardStatus(card, 'failed');
-            img.src = card.url;
+            img.alt = name;
 
             const miss = document.createElement('span');
             miss.className = 'miss';
             miss.textContent = 'not found';
 
             const label = document.createElement('span');
-            label.textContent = card.name;
+            label.textContent = name;
 
             btn.append(img, miss, label);
             btn.addEventListener('click', () => sendCard(card));
 
             card.el = btn;
+            cards.push(card);
             grid.appendChild(btn);
-        });
-        updateSummary();
+
+            if (exists) {
+                img.onload  = () => setCardStatus(card, 'ok');
+                img.onerror = () => setCardStatus(card, 'failed');
+                img.src = card.url;
+            } else {
+                setCardStatus(card, 'failed');
+            }
+        }
+
+        // ---------- Find the cards in the folder ----------
+        const cardName = i => i.toString(CARD_NUMBER_BASE).padStart(CARD_DIGITS, '0');
+
+        function probe(url) {
+            return new Promise(resolve => {
+                const img = new Image();
+                img.onload  = () => resolve(true);
+                img.onerror = () => resolve(false);
+                img.src = url;
+            });
+        }
+
+        // Returns the filename (without extension) if card number i exists, otherwise null.
+        // Tries lowercase hex first, then uppercase (a server like Netlify is case-sensitive).
+        async function findCard(i) {
+            const lower = cardName(i);
+            const names = lower.toUpperCase() === lower ? [lower] : [lower, lower.toUpperCase()];
+            for (const name of names) {
+                if (await probe(CARD_FOLDER + name + CARD_EXT)) return name;
+            }
+            return null;
+        }
+
+        async function discoverCards() {
+            let gap = [];            // missing numbers waiting to see if a later card exists
+            let found = 0, last = null, next = 0, done = false;
+
+            while (!done && next < MAX_CARDS) {
+                const numbers = Array.from({ length: Math.min(BATCH_SIZE, MAX_CARDS - next) }, (_, k) => next + k);
+                const results = await Promise.all(numbers.map(findCard));
+
+                for (let k = 0; k < numbers.length; k++) {
+                    if (results[k]) {
+                        gap.forEach(n => addCard(cardName(n), false));   // show holes inside the range
+                        gap = [];
+                        addCard(results[k], true);
+                        found++;
+                        last = results[k];
+                    } else {
+                        gap.push(numbers[k]);
+                        if (gap.length >= MAX_GAP) { done = true; break; }
+                    }
+                }
+                next += numbers.length;
+                updateSummary();
+            }
+
+            scanning = false;
+            updateSummary();
+            if (found === 0) {
+                log('error', `no cards found. Check that ${CARD_FOLDER}${cardName(0)}${CARD_EXT} opens in your browser (folder name, letter case, file extension).`);
+            } else {
+                log('scan', `found ${found} cards in ${CARD_FOLDER}, ${cardName(0)} to ${last}`);
+            }
+        }
+        discoverCards();
 
         // Round trip check: show whatever card name comes back from Ably
         channel.subscribe(CARD_EVENT, (message) => {
